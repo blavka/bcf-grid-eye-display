@@ -1,5 +1,6 @@
 #include <application.h>
-#include <bc_usb_cdc.h>
+#include <led_strip_gfx_drive.h>
+
 // LED instance
 bc_led_t led;
 
@@ -12,27 +13,6 @@ uint8_t debug_row = 0;
 
 uint8_t brightness = 128;
 uint8_t display_temperature = 0;
-
-void button_event_handler(bc_button_t *self, bc_button_event_t event, void *event_param)
-{
-    if (event == BC_BUTTON_EVENT_PRESS)
-    {
-        //bc_led_set_mode(&led, BC_LED_MODE_TOGGLE);
-        //button_flag = !button_flag;
-
-        brightness >>= 1;
-
-        if(brightness == 0)
-        {
-            brightness = 128;
-        }
-    }
-
-    if(event == BC_BUTTON_EVENT_HOLD)
-    {
-        display_temperature = !display_temperature;
-    }
-}
 
 //the colors we will be using
 const uint16_t camColors[] = {0x480F,
@@ -91,54 +71,41 @@ const bc_led_strip_buffer_t _led_strip_buffer =
 
 bc_gfx_t gfx;
 
-bool is_ready(void *self)
-{
-    return bc_led_strip_is_ready((bc_led_strip_t *)self);
-}
 
-void clear(void *self)
+void button_event_handler(bc_button_t *self, bc_button_event_t event, void *event_param)
 {
-    bc_led_strip_fill((bc_led_strip_t *)self, 0);
-}
+    if (event == BC_BUTTON_EVENT_PRESS)
+    {
+        //bc_led_set_mode(&led, BC_LED_MODE_TOGGLE);
+        //button_flag = !button_flag;
 
-void draw_pixel(void *self, int left, int top, uint32_t color)
-{
-    // Transparent background
-    if (!color)
-    {
-        return;
-    }
-         
-    if (top % 2 == 0)
-    {
-        left = (15 - left);
+        brightness >>= 1;
+
+        if(brightness == 0)
+        {
+            brightness = 128;
+        }
+
+        bc_led_strip_set_brightness(&led_strip, brightness);
     }
 
-    int position = left + top * 16;
-
-    bc_led_strip_set_pixel((bc_led_strip_t *)self, position , color << 8);
+    if(event == BC_BUTTON_EVENT_HOLD)
+    {
+        display_temperature = !display_temperature;
+    }
 }
 
-bool update(void *self)
+void bc_radio_node_on_led_strip_brightness_set(uint64_t *id, uint8_t *brightness)
 {
-    return bc_led_strip_write((bc_led_strip_t *)self);
+    (void) id;
+
+    bc_led_strip_set_brightness(&led_strip, *brightness);
 }
 
-bc_gfx_size_t get_size(void *self)
+void photo_get(uint64_t *id, const char *topic, void *value, void *param)
 {
-    (void) self;
-    static bc_gfx_size_t size = { .width = 16, .height = 16};
-    return size;
-}
 
-const bc_gfx_driver_t gfx_driver = {
-       .is_ready = is_ready,
-       .clear = clear,
-       .draw_pixel = draw_pixel,
-       .get_pixel = NULL,
-       .update = update,
-       .get_size = get_size
-};
+}
 
 void application_init(void)
 {
@@ -173,28 +140,20 @@ void application_init(void)
     bc_i2c_memory_read_8b(BC_I2C_I2C0, AMG88_ADDR, TTHL, (uint8_t*)&temperature[0]);
     bc_i2c_memory_read_8b(BC_I2C_I2C0, AMG88_ADDR, TTHH, (uint8_t*)&temperature[1]);
 
-    // 
-
     volatile float t = (temperature[1]*256 + temperature[0]) * 0.0625;
     t++;
 
-    //bc_log_init(BC_LOG_LEVEL_OFF, BC_LOG_TIMESTAMP_OFF);
-
-
     bc_module_power_init();
-    bc_led_strip_init(&led_strip, bc_module_power_get_led_strip_driver(), &_led_strip_buffer);  
+    bc_led_strip_init(&led_strip, bc_module_power_get_led_strip_driver(), &_led_strip_buffer);
+    bc_led_strip_set_brightness(&led_strip, brightness);
 
-    bc_gfx_init(&gfx, &led_strip, &gfx_driver);
+    bc_gfx_init(&gfx, &led_strip, &led_strp_gfx_driver);
+    bc_gfx_set_rotation(&gfx, BC_GFX_ROTATION_90);
     bc_gfx_clear(&gfx);
-    bc_gfx_font_set(&gfx, &bc_font_ubuntu_11);
+    bc_gfx_update(&gfx);
 
-    for (int i = 0; i < 256; ++i) {
-        bc_led_strip_set_pixel_rgbw(&led_strip, i, 0, 0, 0, 0);
-    }
-
-    bc_led_strip_write(&led_strip);
-
-    bc_usb_cdc_init();
+    bc_uart_init(BC_UART_UART2, BC_UART_BAUDRATE_115200, BC_UART_SETTING_8N1);
+    bc_uart_write(BC_UART_UART2, "\r\n", 2);
 }
 
 int32_t map_c(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_t out_max)
@@ -215,123 +174,105 @@ int32_t map_c(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_
 
 int16_t sensorData[64];
 float temperatures[64];
-
 uint8_t usb_str[512];
 
 void application_task()
 {
+    // read each 32 bytes
+    //dataread(AMG88_ADDR, T01L + i*0x20, sensorData, 32);
+    bc_i2c_memory_transfer_t transfer;
+    transfer.device_address = AMG88_ADDR;
+    transfer.memory_address = T01L; // + i*0x20;
+    transfer.buffer = sensorData;
+    transfer.length = 32*4;
+    bc_i2c_memory_read(BC_I2C_I2C0, &transfer);
 
-    
-        // read each 32 bytes 
-        //dataread(AMG88_ADDR, T01L + i*0x20, sensorData, 32);
-        bc_i2c_memory_transfer_t transfer;
-        transfer.device_address = AMG88_ADDR;
-        transfer.memory_address = T01L; // + i*0x20;
-        transfer.buffer = sensorData;
-        transfer.length = 32*4;
-        bc_i2c_memory_read(BC_I2C_I2C0, &transfer);
+    float min_temperature = 20;
+    float max_temperature = 24;
 
-        float min_temperature = 20;
-        float max_temperature = 24;
-
-        for(int l = 0 ; l < 64 ; l++)
+    for(int l = 0 ; l < 64 ; l++)
+    {
+        int16_t temporaryData = sensorData[l];
+        float temperature;
+        if (temporaryData > 0x200)
         {
-            int16_t temporaryData = sensorData[l];
-            float temperature;
-            if (temporaryData > 0x200)
-            {
-                temperature = (-temporaryData +  0xfff) * -0.25;
-            }
-            else
-            {
-                temperature = temporaryData * 0.25;
-            }
-            
-            if (temperature > max_temperature)
-            {
-                max_temperature = temperature;
-            }
-
-            temperatures[l] = temperature;
+            temperature = (-temporaryData +  0xfff) * -0.25;
+        }
+        else
+        {
+            temperature = temporaryData * 0.25;
         }
 
+        if (temperature > max_temperature)
+        {
+            max_temperature = temperature;
+        }
 
-        uint8_t row;
-        uint8_t col;
+        temperatures[l] = temperature;
+    }
 
+    uint8_t row;
+    uint8_t col;
 
+    for (row = 0; row < 16; row++)
+    {
         for (col = 0; col < 16; col++)
         {
-            for (row = 0; row < 16; row++)
+            uint8_t map_index;
+            uint32_t index_temp = (row/2) + (col/2) * 8;
+            float temperature;
+            uint8_t dark = 0;
+
+            if (((col % 2) == 0) && ((row % 2) == 0))
             {
-                uint8_t map_index;
-                uint32_t index_temp = (row/2) + (col/2) * 8;
-                float temperature;
-                uint8_t dark = 0;
-
-                if (((col % 2) == 0) && ((row % 2) == 0))
-                {
-                    temperature = temperatures[index_temp];
-                }
-                else if (((row % 2) == 1) && ((col % 2) == 0))
-                {
-                    temperature = (temperatures[index_temp] + temperatures[index_temp + 1]) / 2;
-                }
-                 else 
-                {
-                    temperature = (temperatures[row / 2 + (col/2)*8] + temperatures[row / 2 + ((col+1)/2)*8]) / 2;
-                }
-
-                map_index = map_c(((uint32_t)temperature), min_temperature, max_temperature, 0, 255);
-       
-                uint16_t rgb565 = camColors[map_index];
-
-                if (col == 15 || row == 15)
-                {
-                    dark = 1;
-                }
-
-                uint8_t r = (rgb565 >> 8) & 0xF8;
-                uint8_t g = (rgb565 >> 3) & 0xFC;
-                uint8_t b = (rgb565 << 3) & 0xF8;
-
-                // Lower brightness
-                r /= brightness;
-                g /= brightness;
-                b /= brightness;
-
-                if (dark)
-                {
-                    r = 0;
-                    g = 0;
-                    b = 0;
-                }
-
-                if (button_flag && debug_col == col && debug_row == row)
-                {
-                    r = 200;
-                    g = 0;
-                    b = 0;
-                }
-
-                // Actual pixel
-                uint8_t col_led = col;
-                uint8_t row_led;
-                // Liché řádky jsou opačně
-                if (col % 2 == 0)
-                {
-                    row_led = row;
-                }
-                else
-                {
-                    row_led = 15 - row;
-                }
-                uint32_t index_led = row_led + col_led * 16;
-
-                bc_led_strip_set_pixel_rgbw(&led_strip, index_led, r, g, b, 0);
-            
+                temperature = temperatures[index_temp];
             }
+            else if (((row % 2) == 1) && ((col % 2) == 0))
+            {
+                temperature = (temperatures[index_temp] + temperatures[index_temp + 1]) / 2;
+            }
+                else
+            {
+                temperature = (temperatures[row / 2 + (col/2)*8] + temperatures[row / 2 + ((col+1)/2)*8]) / 2;
+            }
+
+            map_index = map_c(((uint32_t)temperature), min_temperature, max_temperature, 0, 255);
+
+            uint16_t rgb565 = camColors[map_index];
+
+            if (col == 15 || row == 15)
+            {
+                dark = 1;
+            }
+
+            uint8_t r = (rgb565 >> 8) & 0xF8;
+            uint8_t g = (rgb565 >> 3) & 0xFC;
+            uint8_t b = (rgb565 << 3) & 0xF8;
+
+            // // Lower brightness
+            // r /= brightness;
+            // g /= brightness;
+            // b /= brightness;
+
+            if (dark)
+            {
+                r = 0;
+                g = 0;
+                b = 0;
+            }
+
+            if (button_flag && debug_col == col && debug_row == row)
+            {
+                r = 200;
+                g = 0;
+                b = 0;
+            }
+
+            uint32_t color = (uint32_t) r << 16 | (uint32_t) g << 8 | (uint32_t) b;
+
+            bc_gfx_draw_pixel(&gfx, col, row, color);
         }
+    }
 
     if (display_temperature)
     {
@@ -343,7 +284,7 @@ void application_task()
         bc_led_strip_set_pixel_rgbw(&led_strip, 12*16+7, 0, 0, color, 0);
     }
 
-    bc_led_strip_write(&led_strip);
+    bc_gfx_update(&gfx);
 
     strncpy((char*)usb_str, "[\"a7c8b05762d0/thermo/-/values\", [", sizeof(usb_str));
     uint32_t i;
@@ -351,7 +292,7 @@ void application_task()
     for (i = 0; i < 64; i++)
     {
         snprintf(str_buffer, sizeof(str_buffer), "%.1f", temperatures[i]);
-        
+
         if(i != 63)
         {
             strncat(str_buffer, ",", sizeof(str_buffer));
@@ -361,7 +302,8 @@ void application_task()
     }
     strncat((char*)usb_str, "]]\n", sizeof(str_buffer));
     //static uint8_t json[] = "[\"a7c8b05762d0/thermo/-/values\", [21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9]]\n";
-    bc_usb_cdc_write(usb_str, strlen((const char*)usb_str));
+    bc_uart_write(BC_UART_UART2, (char*)usb_str, strlen((const char*)usb_str));
 
     bc_scheduler_plan_current_relative(20);
 }
+
