@@ -1,5 +1,6 @@
 #include <application.h>
 #include <led_strip_gfx_drive.h>
+#include <bc_base64.h>
 
 // LED instance
 bc_led_t led;
@@ -108,7 +109,38 @@ void bc_radio_node_on_led_strip_brightness_set(uint64_t *id, uint8_t *brightness
 
 void photo_get(uint64_t *id, const char *topic, void *value, void *param)
 {
+    static uint16_t photo[64];
+    static char str_base64[64];
+    size_t str_length;;
 
+    for (size_t i = 0; i < 64; i++)
+    {
+        photo[i] = (uint16_t) (temperatures[i] * 10.f);
+    }
+
+    str_length = sizeof(str_base64);
+
+    bc_base64_encode(str_base64, &str_length, (uint8_t *) photo, 32);
+
+    bc_radio_pub_string("photo0", str_base64);
+
+    str_length = sizeof(str_base64);
+
+    bc_base64_encode(str_base64, &str_length, ((uint8_t *) photo) + 32, 32);
+
+    bc_radio_pub_string("photo1", str_base64);
+
+    str_length = sizeof(str_base64);
+
+    bc_base64_encode(str_base64, &str_length, ((uint8_t *) photo) + 64, 32);
+
+    bc_radio_pub_string("photo2", str_base64);
+
+    str_length = sizeof(str_base64);
+
+    bc_base64_encode(str_base64, &str_length, ((uint8_t *) photo) + 92, 32);
+
+    bc_radio_pub_string("photo3", str_base64);
 }
 
 void application_init(void)
@@ -160,8 +192,19 @@ void application_init(void)
     bc_gfx_clear(&gfx);
     bc_gfx_update(&gfx);
 
-    bc_uart_init(BC_UART_UART2, BC_UART_BAUDRATE_115200, BC_UART_SETTING_8N1);
-    bc_uart_write(BC_UART_UART2, "\r\n", 2);
+    // bc_uart_init(BC_UART_UART2, BC_UART_BAUDRATE_115200, BC_UART_SETTING_8N1);
+    // bc_uart_write(BC_UART_UART2, "\r\n", 2);
+
+        // Initialize radio
+    bc_radio_init(BC_RADIO_MODE_NODE_LISTENING);
+
+    static bc_radio_sub_t subs[] = {
+        {"infra-grid/-/photo/get", BC_RADIO_SUB_PT_NULL, photo_get, NULL},
+    };
+
+    bc_radio_set_subs((bc_radio_sub_t *) subs, sizeof(subs)/sizeof(bc_radio_sub_t));
+
+    bc_radio_pairing_request("grid-eye-display", VERSION);
 }
 
 int32_t map_c(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_t out_max)
@@ -293,23 +336,23 @@ void application_task()
 
     bc_gfx_update(&gfx);
 
-    strncpy((char*)usb_str, "[\"a7c8b05762d0/thermo/-/values\", [", sizeof(usb_str));
-    uint32_t i;
-    char str_buffer[16];
-    for (i = 0; i < 64; i++)
-    {
-        snprintf(str_buffer, sizeof(str_buffer), "%.1f", temperatures[i]);
+    // strncpy((char*)usb_str, "[\"a7c8b05762d0/thermo/-/values\", [", sizeof(usb_str));
+    // uint32_t i;
+    // char str_buffer[16];
+    // for (i = 0; i < 64; i++)
+    // {
+    //     snprintf(str_buffer, sizeof(str_buffer), "%.1f", temperatures[i]);
 
-        if(i != 63)
-        {
-            strncat(str_buffer, ",", sizeof(str_buffer));
-        }
+    //     if(i != 63)
+    //     {
+    //         strncat(str_buffer, ",", sizeof(str_buffer));
+    //     }
 
-        strncat((char*)usb_str, str_buffer, sizeof(str_buffer));
-    }
-    strncat((char*)usb_str, "]]\n", sizeof(str_buffer));
-    //static uint8_t json[] = "[\"a7c8b05762d0/thermo/-/values\", [21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9]]\n";
-    bc_uart_write(BC_UART_UART2, (char*)usb_str, strlen((const char*)usb_str));
+    //     strncat((char*)usb_str, str_buffer, sizeof(str_buffer));
+    // }
+    // strncat((char*)usb_str, "]]\n", sizeof(str_buffer));
+    // //static uint8_t json[] = "[\"a7c8b05762d0/thermo/-/values\", [21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9]]\n";
+    // bc_uart_write(BC_UART_UART2, (char*)usb_str, strlen((const char*)usb_str));
 
     bc_scheduler_plan_current_relative(20);
 }
