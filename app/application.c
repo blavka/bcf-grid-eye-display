@@ -11,8 +11,12 @@ uint8_t button_flag = 0;
 uint8_t debug_col = 1;
 uint8_t debug_row = 0;
 
-uint8_t brightness = 128;
+uint8_t brightness = 32;
 uint8_t display_temperature = 0;
+
+int16_t sensorData[64];
+float temperatures[64];
+uint8_t usb_str[512];
 
 //the colors we will be using
 const uint16_t camColors[] = {0x480F,
@@ -147,8 +151,12 @@ void application_init(void)
     bc_led_strip_init(&led_strip, bc_module_power_get_led_strip_driver(), &_led_strip_buffer);
     bc_led_strip_set_brightness(&led_strip, brightness);
 
-    bc_gfx_init(&gfx, &led_strip, &led_strp_gfx_driver);
-    bc_gfx_set_rotation(&gfx, BC_GFX_ROTATION_90);
+#if LED_STRIP_DRIVER == LED_STRIP_DRIVER_8X8
+    bc_gfx_init(&gfx, &led_strip, &led_strp_gfx_driver_8x8);
+#else
+    bc_gfx_init(&gfx, &led_strip, &led_strp_gfx_driver_16x16);
+#endif
+    // bc_gfx_set_rotation(&gfx, BC_GFX_ROTATION_90);
     bc_gfx_clear(&gfx);
     bc_gfx_update(&gfx);
 
@@ -171,10 +179,6 @@ int32_t map_c(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_
 
   return val;
 }
-
-int16_t sensorData[64];
-float temperatures[64];
-uint8_t usb_str[512];
 
 void application_task()
 {
@@ -213,15 +217,27 @@ void application_task()
 
     uint8_t row;
     uint8_t col;
+    float temperature;
+    uint8_t map_index;
+    uint16_t rgb565;
+    uint32_t index_temp;
 
+#if LED_STRIP_DRIVER == LED_STRIP_DRIVER_8X8
+    for (row = 0; row < 8; row++)
+    {
+        for (col = 0; col < 8; col++)
+        {
+            index_temp = row + col * 8;
+
+            temperature = temperatures[index_temp];
+
+#else
     for (row = 0; row < 16; row++)
     {
         for (col = 0; col < 16; col++)
         {
-            uint8_t map_index;
-            uint32_t index_temp = (row/2) + (col/2) * 8;
-            float temperature;
-            uint8_t dark = 0;
+
+            index_temp = (row/2) + (col/2) * 8;
 
             if (((col % 2) == 0) && ((row % 2) == 0))
             {
@@ -236,30 +252,20 @@ void application_task()
                 temperature = (temperatures[row / 2 + (col/2)*8] + temperatures[row / 2 + ((col+1)/2)*8]) / 2;
             }
 
-            map_index = map_c(((uint32_t)temperature), min_temperature, max_temperature, 0, 255);
-
-            uint16_t rgb565 = camColors[map_index];
-
             if (col == 15 || row == 15)
             {
-                dark = 1;
+                bc_gfx_draw_pixel(&gfx, col, row, 0);
+
+                continue;
             }
+#endif
+            map_index = map_c(((uint32_t)temperature), min_temperature, max_temperature, 0, 255);
+
+            rgb565 = camColors[map_index];
 
             uint8_t r = (rgb565 >> 8) & 0xF8;
             uint8_t g = (rgb565 >> 3) & 0xFC;
             uint8_t b = (rgb565 << 3) & 0xF8;
-
-            // // Lower brightness
-            // r /= brightness;
-            // g /= brightness;
-            // b /= brightness;
-
-            if (dark)
-            {
-                r = 0;
-                g = 0;
-                b = 0;
-            }
 
             if (button_flag && debug_col == col && debug_row == row)
             {
@@ -273,6 +279,7 @@ void application_task()
             bc_gfx_draw_pixel(&gfx, col, row, color);
         }
     }
+
 
     if (display_temperature)
     {
