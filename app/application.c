@@ -2,6 +2,8 @@
 #include <led_strip_gfx_drive.h>
 #include <bc_base64.h>
 
+#define APPLICATION_TASK_ID 0
+
 // LED instance
 bc_led_t led;
 
@@ -18,6 +20,8 @@ uint8_t display_temperature = 0;
 int16_t sensorData[64];
 float temperatures[64];
 uint8_t usb_str[512];
+
+bc_module_infra_grid_t infra_grid;
 
 //the colors we will be using
 const uint16_t camColors[] = {0x480F,
@@ -100,6 +104,18 @@ void button_event_handler(bc_button_t *self, bc_button_event_t event, void *even
     }
 }
 
+
+void infra_grid_event_handler(bc_module_infra_grid_t *self, bc_module_infra_grid_event_t event, void *event_param)
+{
+    if (event == BC_MODULE_INFRA_GRID_EVENT_UPDATE)
+    {
+        bc_module_infra_grid_get_temperatures_celsius(self, temperatures);
+
+        bc_scheduler_plan_now(APPLICATION_TASK_ID);
+    }
+}
+
+
 void bc_radio_node_on_led_strip_brightness_set(uint64_t *id, uint8_t *brightness)
 {
     (void) id;
@@ -153,31 +169,9 @@ void application_init(void)
     bc_button_init(&button, BC_GPIO_BUTTON, BC_GPIO_PULL_DOWN, false);
     bc_button_set_event_handler(&button, button_event_handler, NULL);
 
-    bc_i2c_init(BC_I2C_I2C0, BC_I2C_SPEED_100_KHZ);
-
-    bc_system_pll_enable();
-
-
-    // 10fps
-    bc_i2c_memory_write_8b (BC_I2C_I2C0, AMG88_ADDR, FPSC, 0x00);
-    // diff interrpt mode, INT output reactive
-    bc_i2c_memory_write_8b (BC_I2C_I2C0, AMG88_ADDR, INTC, 0x00);
-    // moving average output mode active
-    bc_i2c_memory_write_8b (BC_I2C_I2C0, AMG88_ADDR, 0x1F, 0x50);
-    bc_i2c_memory_write_8b (BC_I2C_I2C0, AMG88_ADDR, 0x1F, 0x45);
-    bc_i2c_memory_write_8b (BC_I2C_I2C0, AMG88_ADDR, 0x1F, 0x57);
-    bc_i2c_memory_write_8b (BC_I2C_I2C0, AMG88_ADDR, AVE, 0x20);
-    bc_i2c_memory_write_8b (BC_I2C_I2C0, AMG88_ADDR, 0x1F, 0x00);
-
-    //int sensorTemp[2];
-    //dataread(AMG88_ADDR,TTHL,sensorTemp,2);
-
-    int8_t temperature[2];
-    bc_i2c_memory_read_8b(BC_I2C_I2C0, AMG88_ADDR, TTHL, (uint8_t*)&temperature[0]);
-    bc_i2c_memory_read_8b(BC_I2C_I2C0, AMG88_ADDR, TTHH, (uint8_t*)&temperature[1]);
-
-    volatile float t = (temperature[1]*256 + temperature[0]) * 0.0625;
-    t++;
+    bc_module_infra_grid_init(&infra_grid);
+    bc_module_infra_grid_set_event_handler(&infra_grid, infra_grid_event_handler, NULL);
+    bc_module_infra_grid_set_update_interval(&infra_grid, 100);
 
     bc_module_power_init();
     bc_led_strip_init(&led_strip, bc_module_power_get_led_strip_driver(), &_led_strip_buffer);
@@ -225,45 +219,26 @@ int32_t map_c(int32_t x, int32_t in_min, int32_t in_max, int32_t out_min, int32_
 
 void application_task()
 {
-    // read each 32 bytes
-    //dataread(AMG88_ADDR, T01L + i*0x20, sensorData, 32);
-    bc_i2c_memory_transfer_t transfer;
-    transfer.device_address = AMG88_ADDR;
-    transfer.memory_address = T01L; // + i*0x20;
-    transfer.buffer = sensorData;
-    transfer.length = 32*4;
-    bc_i2c_memory_read(BC_I2C_I2C0, &transfer);
-
-    float min_temperature = 20;
-    float max_temperature = 24;
-
-    for(int l = 0 ; l < 64 ; l++)
-    {
-        int16_t temporaryData = sensorData[l];
-        float temperature;
-        if (temporaryData > 0x200)
-        {
-            temperature = (-temporaryData +  0xfff) * -0.25;
-        }
-        else
-        {
-            temperature = temporaryData * 0.25;
-        }
-
-        if (temperature > max_temperature)
-        {
-            max_temperature = temperature;
-        }
-
-        temperatures[l] = temperature;
-    }
-
     uint8_t row;
     uint8_t col;
     float temperature;
     uint8_t map_index;
     uint16_t rgb565;
     uint32_t index_temp;
+    float min_temperature = 20;
+    float max_temperature = 24;
+
+    for (int i = 0; i < 64; i++)
+    {
+        if (temperatures[i] > max_temperature)
+        {
+            max_temperature = temperatures[i];
+        }
+        if (min_temperature > temperatures[i])
+        {
+            min_temperature = temperatures[i];
+        }
+    }
 
 #if LED_STRIP_DRIVER == LED_STRIP_DRIVER_8X8
     for (row = 0; row < 8; row++)
@@ -354,6 +329,5 @@ void application_task()
     // //static uint8_t json[] = "[\"a7c8b05762d0/thermo/-/values\", [21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9]]\n";
     // bc_uart_write(BC_UART_UART2, (char*)usb_str, strlen((const char*)usb_str));
 
-    bc_scheduler_plan_current_relative(20);
 }
 
