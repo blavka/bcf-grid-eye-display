@@ -19,9 +19,9 @@ uint8_t display_temperature = 0;
 
 int16_t sensorData[64];
 float temperatures[64];
-uint8_t usb_str[512];
 
 bc_module_infra_grid_t infra_grid;
+bc_gfx_t gfx;
 
 //the colors we will be using
 const uint16_t camColors[] = {0x480F,
@@ -52,34 +52,14 @@ const uint16_t camColors[] = {0x480F,
 0xF1E0,0xF1C0,0xF1A0,0xF180,0xF160,0xF140,0xF100,0xF0E0,0xF0C0,0xF0A0,
 0xF080,0xF060,0xF040,0xF020,0xF800,};
 
-
 bc_led_strip_t led_strip;
-static uint32_t _dma_buffer[256 * BC_LED_STRIP_TYPE_RGB * 2]; // count * type * 2
-
+static uint32_t _dma_buffer[(16 * 16) * BC_LED_STRIP_TYPE_RGB * 2];
 const bc_led_strip_buffer_t _led_strip_buffer =
-        {
-                .type = BC_LED_STRIP_TYPE_RGB,
-                .count = 256,
-                .buffer = _dma_buffer
-        };
-
-#define PCTL 0x00
-#define RST 0x01
-#define FPSC 0x02
-#define INTC 0x03
-#define STAT 0x04
-#define SCLR 0x05
-#define AVE 0x07
-#define INTHL 0x08
-#define TTHL 0x0E
-#define TTHH 0x0F
-#define INT0 0x10
-#define T01L 0x80
-
-#define AMG88_ADDR 0x68 // in 7bit
-
-bc_gfx_t gfx;
-
+{
+        .type = BC_LED_STRIP_TYPE_RGB,
+        .count = (16 * 16),
+        .buffer = _dma_buffer
+};
 
 void button_event_handler(bc_button_t *self, bc_button_event_t event, void *event_param)
 {
@@ -177,19 +157,21 @@ void application_init(void)
     bc_led_strip_init(&led_strip, bc_module_power_get_led_strip_driver(), &_led_strip_buffer);
     bc_led_strip_set_brightness(&led_strip, brightness);
 
-#if LED_STRIP_DRIVER == LED_STRIP_DRIVER_8X8
+    #if LED_STRIP_DRIVER == LED_STRIP_DRIVER_8X8
     bc_gfx_init(&gfx, &led_strip, &led_strp_gfx_driver_8x8);
-#else
+    #else
     bc_gfx_init(&gfx, &led_strip, &led_strp_gfx_driver_16x16);
-#endif
+    #endif
     // bc_gfx_set_rotation(&gfx, BC_GFX_ROTATION_90);
     bc_gfx_clear(&gfx);
     bc_gfx_update(&gfx);
 
-    // bc_uart_init(BC_UART_UART2, BC_UART_BAUDRATE_115200, BC_UART_SETTING_8N1);
-    // bc_uart_write(BC_UART_UART2, "\r\n", 2);
+    #if UART != 0
+    bc_uart_init(BC_UART_UART2, BC_UART_BAUDRATE_115200, BC_UART_SETTING_8N1);
+    bc_uart_write(BC_UART_UART2, "\r\n", 2);
+    #endif
 
-        // Initialize radio
+    // Initialize radio
     bc_radio_init(BC_RADIO_MODE_NODE_LISTENING);
 
     static bc_radio_sub_t subs[] = {
@@ -298,7 +280,6 @@ void application_task()
         }
     }
 
-
     if (display_temperature)
     {
         char buff[8];
@@ -311,23 +292,28 @@ void application_task()
 
     bc_gfx_update(&gfx);
 
-    // strncpy((char*)usb_str, "[\"a7c8b05762d0/thermo/-/values\", [", sizeof(usb_str));
-    // uint32_t i;
-    // char str_buffer[16];
-    // for (i = 0; i < 64; i++)
-    // {
-    //     snprintf(str_buffer, sizeof(str_buffer), "%.1f", temperatures[i]);
+    #if UART != 0
+    static char usb_str[512];
+    static char str_buffer[16];
 
-    //     if(i != 63)
-    //     {
-    //         strncat(str_buffer, ",", sizeof(str_buffer));
-    //     }
+    snprintf(usb_str, sizeof(usb_str), "[\"%012llx/thermo/-/values\", [", bc_radio_get_my_id());
 
-    //     strncat((char*)usb_str, str_buffer, sizeof(str_buffer));
-    // }
-    // strncat((char*)usb_str, "]]\n", sizeof(str_buffer));
-    // //static uint8_t json[] = "[\"a7c8b05762d0/thermo/-/values\", [21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9,21.7, 22.9, 22.0,21.7, 22.9, 22.0,21.7, 22.9]]\n";
-    // bc_uart_write(BC_UART_UART2, (char*)usb_str, strlen((const char*)usb_str));
+    uint32_t i;
+    for (i = 0; i < 64; i++)
+    {
+        snprintf(str_buffer, sizeof(str_buffer), "%.1f", temperatures[i]);
 
+        if(i != 63)
+        {
+            strncat(str_buffer, ",", sizeof(str_buffer));
+        }
+
+        strncat((char*)usb_str, str_buffer, sizeof(str_buffer));
+    }
+    strncat((char*)usb_str, "]]\n", sizeof(str_buffer));
+
+    bc_uart_write(BC_UART_UART2, (char*)usb_str, strlen((const char*)usb_str));
+
+    #endif
 }
 

@@ -10,6 +10,8 @@
 
 #define LED_STRIP_DRIVER LED_STRIP_DRIVER_8X8
 
+#define UART 0
+
 #include <bcl.h>
 
 #endif // _APPLICATION_H
